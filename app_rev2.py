@@ -56,7 +56,7 @@ def main_page():
 
     # Date range selection
     start_date = st.date_input("Start Date", value=datetime(2024, 1, 4))
-    end_date = st.date_input("End Date", value=datetime(2024, 3, 5))
+    end_date = st.date_input("End Date", value=datetime(2024, 1, 7))
 
     # TSO filter selection
     filter_option = st.selectbox("Choose a filter", ["ENERGINET", "STATNETT", "SVENSKE KRAFTNÄT", "FINGRID"])
