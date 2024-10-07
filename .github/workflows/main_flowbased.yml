@@ -66,4 +66,4 @@ jobs:
         with:
           app-name: 'FlowBased'
           slot-name: 'Production'
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_6C0F33647BF74B028635A9C0D92894B2 }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_085DAE0A104343AE91B81829A64A1A31 }}
