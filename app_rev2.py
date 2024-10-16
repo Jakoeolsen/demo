@@ -147,6 +147,8 @@ def parse_price_data(xml_data, zone_name):
     df1 = pd.DataFrame(data, columns=["Zone", "Datetime", "Price"])
     df1['Price'] = pd.to_numeric(df1['Price'], errors='coerce')
     df1.dropna(subset=['Price'], inplace=True)
+    df1['Datetime'] = df1['Datetime'] + pd.Timedelta(hours=2)
+
     return df1
 
 # Function to fetch data for Germany
@@ -222,6 +224,8 @@ def split_dataframes(df):
 
     # Remaining data excluding Border_df and Net_df
     Remaining_df = df[~df.index.isin(Border_df.index) & ~df.index.isin(Net_df.index)]
+    
+    
 
     # Store the dataframes in session state
     st.session_state['Border_df'] = Border_df
@@ -236,30 +240,33 @@ def main_page():
     start_date = st.date_input("Start Date", value=datetime(2024, 1, 4))
     end_date = st.date_input("End Date", value=datetime(2024, 3, 5))
 
-    if st.button("Fetch Data"):
-        
-        
-        df = fetch_data(start_date, end_date)
-        germany_df, other_zones_df= fetch_data_prices(start_date, end_date)
-        st.session_state['germany_df'] = germany_df
-        st.session_state['other_zones_df'] = other_zones_df
+    # Calculate the date difference in days
+    date_difference = (end_date - start_date).days
 
-                
-        Net_df = df[df['cnecName'].str.contains("NetPosition", case=False, na=False)].copy()
-        st.dataframe(df)
-        
-        
-        
-        if not df.empty:
-            # Split and store DataFrames in session state
-            split_dataframes(df)
-            st.success("Data fetched and DataFrames created!")
-            st.dataframe(df.head())  # Preview first few rows
-        else:
-            st.warning("No data returned from the API.")
+    if date_difference > 31:
+        st.warning("JAO API cannot manage date ranges longer than one month. Please try again with a shorter range.")
+    else:
+        if st.button("Fetch Data"):
+            df = fetch_data(start_date, end_date)
             
             
-            
+            start_datetime = datetime.combine(start_date, datetime.min.time())  # Add time to start_date
+            start_date_minus_one_hour = start_datetime - timedelta(hours=10)  # Subtract one hour
+
+            germany_df, other_zones_df = fetch_data_prices(start_date_minus_one_hour, end_date)
+            st.session_state['germany_df'] = germany_df
+            st.session_state['other_zones_df'] = other_zones_df
+
+            Net_df = df[df['cnecName'].str.contains("NetPosition", case=False, na=False)].copy()
+
+            if not df.empty:
+                # Split and store DataFrames in session state
+                split_dataframes(df)
+                st.success("Data fetched and DataFrames created!")
+                st.dataframe(df.head())  # Preview first few rows
+            else:
+                st.warning("No data returned from the API.")
+
 def plot_page():
     st.title("Plot Page")
 
@@ -268,98 +275,167 @@ def plot_page():
         Remaining_df = st.session_state['Remaining_df']
         Border_df = st.session_state['Border_df']
         Net_df = st.session_state['Net_df']
-               
-        
-        ####
+
+        # Create a display list for TSOs, replacing '' with 'AC_CNEC'
+        display_tso_options = ['AC_CNEC' if tso == '' else tso for tso in Remaining_df['tso'].unique()]
+
+        # Callback function to update TSO selection and reset CNEC selection
+        def update_tso():
+            st.session_state['tso_selected'] = st.session_state['tso_selectbox']
+            # Reset CNEC selection when TSO is changed
+            st.session_state.pop('selected_cnec', None)
+
+        # Callback function to update CNEC selection
+        def update_cnec():
+            st.session_state['selected_cnec'] = st.session_state['cnec_selectbox']
+
+        # Callback function to update selected columns for Remaining_df
+        def update_columns_remaining():
+            st.session_state['columns_to_plot_remaining'] = st.session_state['columns_to_plot_remaining_select']
+
+        # Callback function to update selected columns for Border_df
+        def update_columns_border():
+            st.session_state['columns_to_plot_border'] = st.session_state['columns_to_plot_border_select']
+
+        # Callback function to update selected columns for Net_df
+        def update_columns_net():
+            st.session_state['columns_to_plot_net'] = st.session_state['columns_to_plot_net_select']
+
+        #### Save TSO selection in session_state ####
+        if 'tso_selected' not in st.session_state:
+            st.session_state['tso_selected'] = display_tso_options[0]  # Default selection
 
         # Select a TSO from Remaining_df
-        tso_selected = st.selectbox("Select a TSO", Remaining_df['tso'].unique())
+        st.selectbox(
+            "Select a TSO",
+            display_tso_options,
+            index=display_tso_options.index(st.session_state['tso_selected']),
+            key='tso_selectbox',
+            on_change=update_tso  # Use callback to update session state and reset CNEC
+        )
 
+        # Map 'AC_CNEC' back to '' when filtering Remaining_df
+        selected_tso = '' if st.session_state['tso_selected'] == 'AC_CNEC' else st.session_state['tso_selected']
+        
         # Filter the Remaining_df based on the selected TSO
-        tso_filtered_df = Remaining_df[Remaining_df['tso'] == tso_selected]
+        tso_filtered_df = Remaining_df[Remaining_df['tso'] == selected_tso]
 
-        # If Energinet is chosen, combine cnecName + contName for selection
-        if tso_selected == "ENERGINET":
+        #### Save CNEC selection in session_state ####
+        if tso_filtered_df['tso'].iloc[0] == "ENERGINET":
             tso_filtered_df['cnec_cont'] = tso_filtered_df['cnecName'] + " + " + tso_filtered_df['contName']
-            selected_cnec = st.selectbox("Select a CNEC", tso_filtered_df['cnec_cont'].unique())
-            filtered_remaining_df = tso_filtered_df[tso_filtered_df['cnec_cont'] == selected_cnec]   ######### BUGGG/FIXED
-
+            if 'selected_cnec' not in st.session_state:
+                st.session_state['selected_cnec'] = tso_filtered_df['cnec_cont'].unique()[0]  # Default selection for new TSO
+            st.selectbox(
+                "Select a CNEC",
+                tso_filtered_df['cnec_cont'].unique(),
+                index=list(tso_filtered_df['cnec_cont'].unique()).index(st.session_state['selected_cnec']),
+                key='cnec_selectbox',
+                on_change=update_cnec  # Use callback to update session state
+            )
+            filtered_remaining_df = tso_filtered_df[tso_filtered_df['cnec_cont'] == st.session_state['selected_cnec']]
         else:
-            # Otherwise, just use cnecName
-            selected_cnec = st.selectbox("Select a CNEC", tso_filtered_df['cnecName'].unique())
-            filtered_remaining_df = tso_filtered_df[tso_filtered_df['cnecName'] == selected_cnec]   ######### BUGGG/FIXED
+            if 'selected_cnec' not in st.session_state:
+                st.session_state['selected_cnec'] = tso_filtered_df['cnecName'].unique()[0]  # Default selection for new TSO
+            st.selectbox(
+                "Select a CNEC",
+                tso_filtered_df['cnecName'].unique(),
+                index=list(tso_filtered_df['cnecName'].unique()).index(st.session_state['selected_cnec']),
+                key='cnec_selectbox',
+                on_change=update_cnec  # Use callback to update session state
+            )
+            filtered_remaining_df = tso_filtered_df[tso_filtered_df['cnecName'] == st.session_state['selected_cnec']]
 
-
-        # Filter DataFrame for the selected CNEC
+        #### Save columns to plot for Remaining_df in session_state ####
+        if 'columns_to_plot_remaining' not in st.session_state:
+            st.session_state['columns_to_plot_remaining'] = ['ram']  # Default columns
 
         # Choose columns to plot for Remaining_df
-        columns_to_plot_remaining = st.multiselect(
+        st.multiselect(
             "Select columns to plot for Remaining_df",
-            options=['ram', 'minFlow', 'u', 'imax', 'fmax', 'frm', 'fref', 'fall', 'fnrao', 'amr', 'aac', 'iva','ram','shadow_price','Flow_FB'],
-            default=['ram']
+            options=['ram', 'minFlow','maxFlow', 'u', 'imax', 'fmax', 'frm', 'fref', 'fall', 'fnrao', 'amr', 'aac', 'iva', 'shadow_price', 'Flow_FB'],
+            default=st.session_state['columns_to_plot_remaining'],
+            key='columns_to_plot_remaining_select',
+            on_change=update_columns_remaining  # Use callback to update session state
         )
 
         # Plot the selected CNEC for the Remaining_df
-        if columns_to_plot_remaining:
-            fig = px.line(filtered_remaining_df, x='dateTimeUtc', y=columns_to_plot_remaining, title=f"Plot for {selected_cnec} (Remaining_df)")
+        if st.session_state['columns_to_plot_remaining']:
+            fig = px.line(filtered_remaining_df, x='dateTimeUtc', y=st.session_state['columns_to_plot_remaining'], title=f"Plot for {st.session_state['selected_cnec']} (Remaining_df)")
             st.plotly_chart(fig)
 
-        # Table for Remaining_df that includes all cnecName values in the dropdown menu
-        #remaining_table = tso_filtered_df[['cnecName', 'ptdf_DK1','ptdf_DK1_CO','ptdf_DK1_DE','ptdf_DK1_KS','ptdf_DK1_SK','ptdf_DK1_SB','ptdf_DK2','ptdf_DK2_KO','ptdf_DK2_SB','ptdf_FI','ptdf_FI_EL','ptdf_FI_FS','ptdf_NO1','ptdf_NO2','ptdf_NO2_ND','ptdf_NO2_SK','ptdf_NO2_NK','ptdf_NO3','ptdf_NO4','ptdf_NO5','ptdf_SE1','ptdf_SE2','ptdf_SE3','ptdf_SE3_FS','ptdf_SE3_KS','ptdf_SE3_SWL','ptdf_SE4','ptdf_SE4_BC','ptdf_SE4_NB','ptdf_SE4_SP','ptdf_SE4_SWL','ram']]  # Customize with specific columns like 'ptdf_DK1'
-        #st.dataframe(remaining_table.set_index('cnecName'))
-
-        # Section to plot CNECs associated with Border_df and Net_df
+        #### Plot for Border_df ####
         st.subheader("Plot CNECs for Border")
 
-        # Select a CNEC from Border_df and plot
-        selected_flow_border = st.selectbox("Select a CNEC from Border_df", Border_df['cnecName'].unique())
-        filtered_border_df = Border_df[Border_df['cnecName'] == selected_flow_border]
+        # Save Border_df CNEC selection in session_state
+        if 'selected_flow_border' not in st.session_state:
+            st.session_state['selected_flow_border'] = Border_df['cnecName'].unique()[0]  # Default selection
+
+        st.selectbox(
+            "Select a CNEC from Border_df",
+            Border_df['cnecName'].unique(),
+            index=list(Border_df['cnecName'].unique()).index(st.session_state['selected_flow_border']),
+            key='border_cnec_selectbox',
+            on_change=lambda: st.session_state.update({'selected_flow_border': st.session_state['border_cnec_selectbox']})
+        )
+
+        filtered_border_df = Border_df[Border_df['cnecName'] == st.session_state['selected_flow_border']]
+
+        # Save columns to plot for Border_df in session_state
+        if 'columns_to_plot_border' not in st.session_state:
+            st.session_state['columns_to_plot_border'] = ['ram']  # Default columns for Border_df
 
         # Choose columns to plot for Border_df
-        columns_to_plot_border = st.multiselect(
+        st.multiselect(
             "Select columns to plot for Border_df",
-            options=['ram', 'minFlow', 'u', 'imax', 'fmax', 'frm', 'fref', 'fall', 'fnrao', 'amr', 'aac', 'iva','ram','shadow_price','Flow_FB'],
-            default=['ram']
+            options=['ram', 'minFlow','maxFlow', 'u', 'imax', 'fmax', 'frm', 'fref', 'fall', 'fnrao', 'amr', 'aac', 'iva', 'shadow_price', 'Flow_FB'],
+            default=st.session_state['columns_to_plot_border'],
+            key='columns_to_plot_border_select',
+            on_change=update_columns_border  # Use callback to update session state
         )
 
-        if columns_to_plot_border:
-            fig_border = px.line(filtered_border_df, x='dateTimeUtc', y=columns_to_plot_border, title=f"Plot for {selected_flow_border} (Border_df)")
+        # Plot the selected CNEC for the Border_df
+        if st.session_state['columns_to_plot_border']:
+            fig_border = px.line(filtered_border_df, x='dateTimeUtc', y=st.session_state['columns_to_plot_border'], title=f"Plot for {st.session_state['selected_flow_border']} (Border_df)")
             st.plotly_chart(fig_border)
 
-        # Table for Border_df that includes all cnecName values in the dropdown menu
-        #border_table = Border_df[['cnecName', 'ptdf_DK1','ptdf_DK1_CO','ptdf_DK1_DE','ptdf_DK1_KS','ptdf_DK1_SK','ptdf_DK1_SB','ptdf_DK2','ptdf_DK2_KO','ptdf_DK2_SB','ptdf_FI','ptdf_FI_EL','ptdf_FI_FS','ptdf_NO1','ptdf_NO2','ptdf_NO2_ND','ptdf_NO2_SK','ptdf_NO2_NK','ptdf_NO3','ptdf_NO4','ptdf_NO5','ptdf_SE1','ptdf_SE2','ptdf_SE3','ptdf_SE3_FS','ptdf_SE3_KS','ptdf_SE3_SWL','ptdf_SE4','ptdf_SE4_BC','ptdf_SE4_NB','ptdf_SE4_SP','ptdf_SE4_SWL','ram']]  # Customize with specific columns like 'ptdf_DK1'
-        #st.dataframe(border_table.set_index('cnecName'))
-
+        #### Plot for Net_df ####
         st.subheader("Plot CNECs for Net Position")
 
-        # Select a CNEC from Net_df and plot
-        selected_cnec_net = st.selectbox("Select a CNEC from Net_df", Net_df['cnecName'].unique())
-        filtered_net_df = Net_df[Net_df['cnecName'] == selected_cnec_net]
+        # Save Net_df CNEC selection in session_state
+        if 'selected_cnec_net' not in st.session_state:
+            st.session_state['selected_cnec_net'] = Net_df['cnecName'].unique()[0]  # Default selection
 
-        # Choose columns to plot for Net_df
-        columns_to_plot_net = st.multiselect(
-            "Select columns to plot for Net_df",
-            options=['minFlow', 'fmax', 'fref', 'aac','shadow_price','Flow_FB'],
-            default=['Flow_FB']
+        st.selectbox(
+            "Select a CNEC from Net_df",
+            Net_df['cnecName'].unique(),
+            index=list(Net_df['cnecName'].unique()).index(st.session_state['selected_cnec_net']),
+            key='net_cnec_selectbox',
+            on_change=lambda: st.session_state.update({'selected_cnec_net': st.session_state['net_cnec_selectbox']})
         )
 
-        if columns_to_plot_net:
-            fig_net = px.line(filtered_net_df, x='dateTimeUtc', y=columns_to_plot_net, title=f"Plot for {selected_cnec_net} (Net_df)")
-            st.plotly_chart(fig_net)
+        filtered_net_df = Net_df[Net_df['cnecName'] == st.session_state['selected_cnec_net']]
 
-        # Table for Net_df that includes all cnecName values in the dropdown menu
-        #net_table = Net_df[['cnecName', 'ptdf_DK1','ptdf_DK1_CO','ptdf_DK1_DE','ptdf_DK1_KS','ptdf_DK1_SK','ptdf_DK1_SB','ptdf_DK2','ptdf_DK2_KO','ptdf_DK2_SB','ptdf_FI','ptdf_FI_EL','ptdf_FI_FS','ptdf_NO1','ptdf_NO2','ptdf_NO2_ND','ptdf_NO2_SK','ptdf_NO2_NK','ptdf_NO3','ptdf_NO4','ptdf_NO5','ptdf_SE1','ptdf_SE2','ptdf_SE3','ptdf_SE3_FS','ptdf_SE3_KS','ptdf_SE3_SWL','ptdf_SE4','ptdf_SE4_BC','ptdf_SE4_NB','ptdf_SE4_SP','ptdf_SE4_SWL','ram']]  # Customize with specific columns like 'ptdf_DK1'
-        #st.dataframe(net_table.set_index('cnecName'))
+        # Save columns to plot for Net_df in session_state
+        if 'columns_to_plot_net' not in st.session_state:
+            st.session_state['columns_to_plot_net'] = ['ram']  # Default columns for Net_df
+
+        # Choose columns to plot for Net_df
+        st.multiselect(
+            "Select columns to plot for Net_df",
+            options=['ram', 'minFlow','maxFlow', 'fmax', 'shadow_price', 'Flow_FB'],
+            default=st.session_state['columns_to_plot_net'],
+            key='columns_to_plot_net_select',
+            on_change=update_columns_net  # Use callback to update session state
+        )
+
+        # Plot the selected CNEC for the Net_df
+        if st.session_state['columns_to_plot_net']:
+            fig_net = px.line(filtered_net_df, x='dateTimeUtc', y=st.session_state['columns_to_plot_net'], title=f"Plot for {st.session_state['selected_cnec_net']} (Net_df)")
+            st.plotly_chart(fig_net)
 
     else:
         st.warning("No DataFrame found. Please go to the Main Page and initiate the API call.")
 
-
-        
-        
-        
-        
-        
 
 
 def map_page():
@@ -367,28 +443,62 @@ def map_page():
     ##########################################################################################
                                 ### MAP###
     ###########################################################################################
-    st.title("Flow Visualization Map")
+    st.title("Hourly summary - Map")
 
     # Date selection
     Remaining_df = st.session_state.get('Remaining_df', None)
+    
+    def update_hour():
+        st.session_state['selected_hour'] = st.session_state['hour_selectbox']
+        
+    def update_date():
+        st.session_state['selected_date'] = st.session_state['date_selectbox']
 
     if Remaining_df is not None:
     # Extract unique dates from Remaining_df['dateTimeUtc'] and convert them to datetime.date
         Remaining_df['date'] = pd.to_datetime(Remaining_df['dateTimeUtc']).dt.date
         unique_dates = Remaining_df['date'].unique()
+        unique_dates = unique_dates.tolist()  # Convert unique_dates to a list
+        
+        
+        if 'selected_date' not in st.session_state:
+            st.session_state['selected_date'] = unique_dates[0]  # Default to the first date
+        
 
+        
+        
     # Date picker with only available dates from Remaining_df
-        selected_date = st.selectbox("Select a date", options=sorted(unique_dates))
-
+        selected_date = st.selectbox(
+            "Select a date",
+            options=unique_dates,
+            index=unique_dates.index(st.session_state['selected_date']),
+            key='date_selectbox',
+            on_change=update_date  # Callback to update session state when date changes
+)
+        
+        
+        
+        
     # Filter Remaining_df to only include rows with the selected date
         filtered_df_by_date = Remaining_df[Remaining_df['date'] == selected_date]
 
     # Extract unique hours for the selected date (formatted as "HH:MM")
         filtered_df_by_date['hour'] = pd.to_datetime(filtered_df_by_date['dateTimeUtc']).dt.strftime('%H:%M')
         unique_hours = filtered_df_by_date['hour'].unique()
+        unique_hours = unique_hours.tolist()  # Convert unique_hours to a list
+        
+        
+        if 'selected_hour' not in st.session_state or st.session_state['selected_hour'] not in unique_hours:
+            st.session_state['selected_hour'] = unique_hours[0]  # Default to the first date
 
     # Hour picker with only available hours for the selected date
-        selected_hour = st.selectbox("Select an hour", options=sorted(unique_hours))
+        selected_hour = st.selectbox(
+            "Select an hour",
+            options=unique_hours,
+            index=unique_hours.index(st.session_state['selected_hour']),
+            key='hour_selectbox',
+            on_change=update_hour  # Callback to update session state when hour changes
+)
         
         
 
@@ -400,12 +510,14 @@ def map_page():
         st.write(f"Visualizing data for datetime: {formatted_datetime}")
 
     # Filter Remaining_df based on the selected date and hour
+        tso_display_mapping = {'ENERGINET': 'ENERGINET', 'STATNETT': 'STATNETT', 'FINGRID': 'FINGRID', 'SVK': 'SVK', 'AC_CNEC': ''}
+
+# Use the display names in the multiselect dropdown
         selected_tso = st.multiselect(
             "Select TSO to table",
-            options=['ENERGINET','STATNETT','FINGRID','SVK',''],
-            default=['ENERGINET','STATNETT','FINGRID','SVK','']
-        )
-    
+            options=list(tso_display_mapping.keys()),  # Show 'AC_CNEC' instead of ''
+            default=['ENERGINET', 'STATNETT', 'FINGRID', 'SVK', 'AC_CNEC']
+)
         tso_filtered_df = Remaining_df[Remaining_df['tso'].isin(selected_tso)]
        
 
@@ -521,7 +633,11 @@ def map_page():
     net_price.rename(columns={'Zone': 'region'}, inplace=True)
     net_price = net_price.set_index('region')['Price'].to_dict()
     
-    
+    all_zones = ['DK1', 'DK2', 'SE4', 'SE3', 'SE2', 'SE1', 'NO4', 'NO3', 'NO1', 'NO2', 'NO5', 'FI', 'NL', 'DE', 'PL', 'LI', 'ES']
+
+    for zone in all_zones:
+        if zone not in net_price:
+            net_price[zone] = np.nan  # Assign NaN if price is missing for the zone
     
     
     
@@ -568,6 +684,10 @@ def map_page():
     
     
     ### South west link
+    
+    
+    
+    
     
     ####  SE3
     Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('SE3_KS', 'DK1')
@@ -755,11 +875,13 @@ def map_page():
 
 # Add the region markers and their values
     for region, coord in COORDINATES.items():
-        max_value = max(net_price.values())
-        min_value = min(net_price.values())
-        normalized_value = normalize(net_price[region], max_value, min_value)
-
-        color1 = f'rgba({255 * (1 - normalized_value)}, 0, 0, {1 - normalized_value + 0.3})'
+        max_value = max([v for v in net_price.values() if pd.notna(v)])
+        min_value = min([v for v in net_price.values() if pd.notna(v)])
+        if pd.isna(net_price[region]):
+            color1 = 'black'
+        else: 
+            normalized_value = normalize(net_price[region], max_value, min_value)
+            color1 = f'rgba({255 * (1 - normalized_value)}, 0, 0, {1 - normalized_value + 0.3})'
 
     # Add region markers first (these will be under the text)
         fig.add_trace(go.Scattermapbox(
@@ -799,7 +921,7 @@ def map_page():
 # Display the figure in Streamlit
     st.plotly_chart(fig)
 
-    tso_filtered_df_no_index = tso_filtered_df[['cnecName','tso','Flow_FB','shadow_price','ptdf_DK1','ptdf_DK1_CO','ptdf_DK1_DE','ptdf_DK1_KS','ptdf_DK1_SK','ptdf_DK1_SB','ptdf_DK2','ptdf_DK2_KO','ptdf_DK2_SB','ptdf_FI','ptdf_FI_EL','ptdf_FI_FS','ptdf_NO1','ptdf_NO2','ptdf_NO2_ND','ptdf_NO2_SK','ptdf_NO2_NK','ptdf_NO3','ptdf_NO4','ptdf_NO5','ptdf_SE1','ptdf_SE2','ptdf_SE3','ptdf_SE3_FS','ptdf_SE3_KS','ptdf_SE3_SWL','ptdf_SE4','ptdf_SE4_BC','ptdf_SE4_NB','ptdf_SE4_SP','ptdf_SE4_SWL','ram']].reset_index(drop=True)
+    tso_filtered_df_no_index = tso_filtered_df[['cnecName','tso','Flow_FB','ram','shadow_price','ptdf_DK1','ptdf_DK1_CO','ptdf_DK1_DE','ptdf_DK1_KS','ptdf_DK1_SK','ptdf_DK1_SB','ptdf_DK2','ptdf_DK2_KO','ptdf_DK2_SB','ptdf_FI','ptdf_FI_EL','ptdf_FI_FS','ptdf_NO1','ptdf_NO2','ptdf_NO2_ND','ptdf_NO2_SK','ptdf_NO2_NK','ptdf_NO3','ptdf_NO4','ptdf_NO5','ptdf_SE1','ptdf_SE2','ptdf_SE3','ptdf_SE3_FS','ptdf_SE3_KS','ptdf_SE3_SWL','ptdf_SE4','ptdf_SE4_BC','ptdf_SE4_NB','ptdf_SE4_SP','ptdf_SE4_SWL']].reset_index(drop=True)
     
     
     tso_filtered_df_no_index = tso_filtered_df_no_index.sort_values(by='shadow_price', ascending=False)
@@ -876,23 +998,10 @@ def map_page():
     ###############################################################################################
 
 
-
-    
-    
-
-
-    
-    
-    
-    
-    
-
-
+# Function for the flow plot page
 # Function for the flow plot page
 def flow_page():
-    st.title("Flow Plots")
-
-    # Define the available flows in the desired format
+   # Define the available flows in the desired format
     available_flows = [
         'FI->FI_EL', 'DK1->DK2', 'DK1->SE3', 'DK1->NO2', 
         'DK2->SE4', 'SE4->SE3', 'SE3->NO1', 'SE3->SE2',
@@ -915,7 +1024,7 @@ def flow_page():
             # Filter the DataFrame for the selected flow (assuming fref and datetime are available in the dataset)
             filtered_df = st.session_state['Border_df'][(st.session_state['Border_df']['biddingZoneFrom'] == in_domain) &
                                                         (st.session_state['Border_df']['biddingZoneTo'] == out_domain)]
-
+            st.dataframe(filtered_df)
             if not filtered_df.empty:
                 # Plot fref as a function of datetime for the selected flow
                 fig = px.line(filtered_df, x='dateTimeUtc', y='fref', title=f"Flow: {flow}", labels={'fref': 'Flow Reference (fref)', 'dateTimeUtc': 'Datetime'})
@@ -1012,13 +1121,13 @@ def DA_price_page():
 
 # Sidebar for navigation
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["API DATE SELECTOR", "CNEC PLOT PAGE", "Flow Visualization Map", "Flow plot page","Net position plots","Shadow Price","DA Price"])
+page = st.sidebar.radio("Go to", ["API DATE SELECTOR", "CNEC PLOT PAGE", "Hourly summary - Map", "Flow plot page","Net position plots","Shadow Price","DA Price"])
 
 if page == "API DATE SELECTOR":
      main_page()
 elif page == "CNEC PLOT PAGE":
     plot_page()
-elif page == "Flow Visualization Map":
+elif page == "Hourly summary - Map":
     map_page()
 elif page == "Flow plot page":
     flow_page()
