@@ -47,7 +47,8 @@ def fetch_data(start_date, end_date):
     if response.status_code >= 200 and response.status_code < 300:
         data = response.json()['data'] # FROM JSON FORMAT TO DATA FRAME
         df = pd.DataFrame(data)            
-        df['dateTimeUtc'] = pd.to_datetime(df['dateTimeUtc'])
+        df['dateTimeUtc'] = pd.to_datetime(df['dateTimeUtc'], utc=True)
+        df['dateTimeCET'] = df['dateTimeUtc'].dt.tz_convert('CET')
     
     else:
         error_message = f"HTML query returned an unexpected response. Status code: {response.status_code}. Response text: {response.text}"
@@ -237,8 +238,8 @@ def main_page():
     st.title("API Data Fetcher")
 
     # Date input
-    start_date = st.date_input("Start Date", value=datetime(2024, 1, 4))
-    end_date = st.date_input("End Date", value=datetime(2024, 3, 5))
+    start_date = st.date_input("Start Date", value=datetime(2024, 10, 1))
+    end_date = st.date_input("End Date", value=datetime(2024, 10, 10))
 
     # Calculate the date difference in days
     date_difference = (end_date - start_date).days
@@ -247,11 +248,14 @@ def main_page():
         st.warning("JAO API cannot manage date ranges longer than one month. Please try again with a shorter range.")
     else:
         if st.button("Fetch Data"):
-            df = fetch_data(start_date, end_date)
+            
+            
             
             
             start_datetime = datetime.combine(start_date, datetime.min.time())  # Add time to start_date
             start_date_minus_one_hour = start_datetime - timedelta(hours=10)  # Subtract one hour
+           
+            df = fetch_data(start_date_minus_one_hour, end_date)
 
             germany_df, other_zones_df = fetch_data_prices(start_date_minus_one_hour, end_date)
             st.session_state['germany_df'] = germany_df
@@ -360,7 +364,7 @@ def plot_page():
 
         # Plot the selected CNEC for the Remaining_df
         if st.session_state['columns_to_plot_remaining']:
-            fig = px.line(filtered_remaining_df, x='dateTimeUtc', y=st.session_state['columns_to_plot_remaining'], title=f"Plot for {st.session_state['selected_cnec']} (Remaining_df)")
+            fig = px.line(filtered_remaining_df, x='dateTimeCET', y=st.session_state['columns_to_plot_remaining'], title=f"Plot for {st.session_state['selected_cnec']} (Remaining_df)")
             st.plotly_chart(fig)
 
         #### Plot for Border_df ####
@@ -395,7 +399,7 @@ def plot_page():
 
         # Plot the selected CNEC for the Border_df
         if st.session_state['columns_to_plot_border']:
-            fig_border = px.line(filtered_border_df, x='dateTimeUtc', y=st.session_state['columns_to_plot_border'], title=f"Plot for {st.session_state['selected_flow_border']} (Border_df)")
+            fig_border = px.line(filtered_border_df, x='dateTimeCET', y=st.session_state['columns_to_plot_border'], title=f"Plot for {st.session_state['selected_flow_border']} (Border_df)")
             st.plotly_chart(fig_border)
 
         #### Plot for Net_df ####
@@ -430,7 +434,7 @@ def plot_page():
 
         # Plot the selected CNEC for the Net_df
         if st.session_state['columns_to_plot_net']:
-            fig_net = px.line(filtered_net_df, x='dateTimeUtc', y=st.session_state['columns_to_plot_net'], title=f"Plot for {st.session_state['selected_cnec_net']} (Net_df)")
+            fig_net = px.line(filtered_net_df, x='dateTimeCET', y=st.session_state['columns_to_plot_net'], title=f"Plot for {st.session_state['selected_cnec_net']} (Net_df)")
             st.plotly_chart(fig_net)
 
     else:
@@ -448,11 +452,16 @@ def map_page():
     # Date selection
     Remaining_df = st.session_state.get('Remaining_df', None)
     
+    
+    Net_df = st.session_state.get('Net_df', None)
+
+    
     def update_hour():
         st.session_state['selected_hour'] = st.session_state['hour_selectbox']
         
     def update_date():
         st.session_state['selected_date'] = st.session_state['date_selectbox']
+        
 
     if Remaining_df is not None:
     # Extract unique dates from Remaining_df['dateTimeUtc'] and convert them to datetime.date
@@ -478,8 +487,6 @@ def map_page():
         
         
         
-        
-    # Filter Remaining_df to only include rows with the selected date
         filtered_df_by_date = Remaining_df[Remaining_df['date'] == selected_date]
 
     # Extract unique hours for the selected date (formatted as "HH:MM")
@@ -512,13 +519,25 @@ def map_page():
     # Filter Remaining_df based on the selected date and hour
         tso_display_mapping = {'ENERGINET': 'ENERGINET', 'STATNETT': 'STATNETT', 'FINGRID': 'FINGRID', 'SVK': 'SVK', 'AC_CNEC': ''}
 
-# Use the display names in the multiselect dropdown
-        selected_tso = st.multiselect(
+# Initialize the TSO selection in session state if not already present
+        if 'selected_tso' not in st.session_state:
+            st.session_state['selected_tso'] = ['ENERGINET', 'STATNETT', 'FINGRID', 'SVK', 'AC_CNEC']
+
+# Multiselect with display names from the mapping
+        selected_display_tso = st.multiselect(
             "Select TSO to table",
-            options=list(tso_display_mapping.keys()),  # Show 'AC_CNEC' instead of ''
-            default=['ENERGINET', 'STATNETT', 'FINGRID', 'SVK', 'AC_CNEC']
+            options=list(tso_display_mapping.keys()),  # Show 'AC_CNEC' as an empty string
+            format_func=lambda x: tso_display_mapping[x] if tso_display_mapping[x] != '' else 'AC_CNEC',  # Show 'AC_CNEC' properly in dropdown
+            default=st.session_state['selected_tso']
 )
-        tso_filtered_df = Remaining_df[Remaining_df['tso'].isin(selected_tso)]
+
+# Update session state with the new selection
+        st.session_state['selected_tso'] = selected_display_tso
+
+# Filter the DataFrame using the actual TSO values
+        tso_filtered_df = Remaining_df[Remaining_df['tso'].isin(selected_display_tso)]
+
+# Display or use tso_filtered_df as needed
        
 
 
@@ -527,8 +546,11 @@ def map_page():
 
     
     
-        tso_filtered_df = tso_filtered_df[tso_filtered_df['dateTimeUtc'] == formatted_datetime]
- 
+        tso_filtered_df = tso_filtered_df[tso_filtered_df['dateTimeCET'] == formatted_datetime]
+        
+        
+        Net_df_filtered = Net_df[Net_df['dateTimeCET'] == formatted_datetime]
+
 
     ## Filter for rows where tso == 'ENERGINET'
         tso_filtered_df_energinet = tso_filtered_df[tso_filtered_df['tso'] == 'ENERGINET'].copy()
@@ -616,7 +638,7 @@ def map_page():
     #########################################################################################################
     
     Border_df = st.session_state.get('Border_df', None)
-    Border_df = Border_df[Border_df['dateTimeUtc'] == formatted_datetime]
+    Border_df = Border_df[Border_df['dateTimeCET'] == formatted_datetime]
     
     
     germany_df = st.session_state['germany_df']
@@ -758,51 +780,50 @@ def map_page():
     # INITIAL VALUES
     
     flows = {
-        ('DK1', 'DK2'): -50,
-        ('DK1', 'SE3'): 70,
-        ('DK1', 'NO2'): -30,
-        ('DK2', 'SE4'): 45,
-        ('SE4', 'SE3'): 55,
-        ('SE3', 'NO1'): -25,
-        ('SE3', 'SE2'): 65,
-        ('NO1', 'NO2'): 35,
-        ('NO1', 'NO3'): -45,
-        ('NO1', 'NO5'): 40,
-        ('NO2', 'NO5'): -20,
-        ('NO5', 'NO3'): 50,
-        ('NO3', 'SE2'): -60,
-        ('NO3', 'NO4'): 75,
-        ('NO4', 'SE2'): 80,  
-        ('SE1', 'NO4'): 55,  
-        ('SE1', 'SE2'): 65,  
-        ('SE1', 'FI'):  40,  
-        ('FI', 'SE3'):  50,  
-        ('FI', 'NO4'):  45,
-        ('NO2', 'NL'):  50,
-        ('DK1', 'NL'):  80,
-        ('NO2', 'DE'):  40, 
-        ('DK1', 'DE'):  60, 
-        ('DK2', 'DE'):  10, 
+        ('DK1', 'DK2'): 0,
+        ('DK1', 'SE3'): 0,
+        ('DK1', 'NO2'): 0,
+        ('DK2', 'SE4'): 0,
+        ('SE4', 'SE3'): 0,
+        ('SE3', 'NO1'): 0,
+        ('SE3', 'SE2'): 0,
+        ('NO1', 'NO2'): 0,
+        ('NO1', 'NO3'): 0,
+        ('NO1', 'NO5'): 0,
+        ('NO2', 'NO5'): 0,
+        ('NO5', 'NO3'): 0,
+        ('NO3', 'SE2'): 0,
+        ('NO3', 'NO4'): 0,
+        ('NO4', 'SE2'): 0,  
+        ('SE1', 'NO4'): 0,  
+        ('SE1', 'SE2'): 0,  
+        ('SE1', 'FI'):  0,  
+        ('FI', 'SE3'):  0,  
+        ('FI', 'NO4'):  0,
+        ('NO2', 'NL'):  0,
+        ('DK1', 'NL'):  0,
+        ('NO2', 'DE'):  0, 
+        ('DK1', 'DE'):  0, 
+        ('DK2', 'DE'):  0, 
         ('SE4', 'PL'):  0, 
-        ('SE4', 'DE'):  30,
-        ('SE4', 'LI'):  30, 
-        ('FI',  'ES'):  10,
+        ('SE4', 'DE'):  0,
+        ('SE4', 'LI'):  0, 
+        ('FI',  'ES'):  0,
     }
     flows_copy = flows.copy()
 
-    for (zone1, zone2), value in flows_copy.items():
+# Iterate over the original flows dictionary
+    for (zone1, zone2), value in list(flows.items()):  # Use list(flows.items()) to avoid modifying the dictionary during iteration
+    # Filter for the corresponding zones and get the row with the maximum flow
         max_flow_row = filter_for_zones(Border_df, zone1, zone2, 'flow')
-        
-        #    max_flow_row = filter_for_zones(Border_df, 'DK1', 'DK2', 'flow')    
-    # If a row is returned, update the flows dictionary with the maximum absolute flow_fb value
-        if max_flow_row is not None:
-            flows[(max_flow_row['biddingZoneFrom'], max_flow_row['biddingZoneTo'])] = max_flow_row['Flow_FB']
+    
+    # If a valid row is returned, update the flows dictionary
+        if max_flow_row is not None and not max_flow_row.empty:
+            flows[(zone1, zone2)] = max_flow_row['Flow_FB']  # Overwrite the original flows directly
 
-
-
-
-
-
+        else:
+        # Optional: log if no valid row is found
+            st.write(f"No valid flow found for {zone1}->{zone2}")
 
 
 
@@ -817,8 +838,12 @@ def map_page():
         source_coord = np.array(COORDINATES[source])
         target_coord = np.array(COORDINATES[target])
         
+        
+        
         if flow_value < 0:
+
             source_coord, target_coord = target_coord, source_coord
+            source, target = target, source
             flow_value = abs(flow_value)
         
         line_width = flow_value * arrow_scale / max(flows.values())+1
@@ -867,11 +892,130 @@ def map_page():
             hoverinfo='text',
             hovertext=f"{source} -> {target}: {flow_value:.1f}"
         ))
+        
+    
+    def add_curved_arrow(fig, source, target, flow_value, arrow_scale):
 
 
 
+        source_coord = np.array(COORDINATES[source])
+        target_coord = np.array(COORDINATES[target])
+        
+        if flow_value < 0:
+            source_coord, target_coord = target_coord, source_coord
+            source, target = target, source
+            flow_value = abs(flow_value)        
+            # Always calculate the intermediate points using the original source and target coordinates
+        mid_point_lat = (source_coord[0] + target_coord[0]) / 2
+        mid_point_lon = (source_coord[1] + target_coord[1]) / 2
+
+    # Add curvature by adjusting the mid-point and adding control points
+        control_point_1_lat = mid_point_lat +1  # Adjust for more curvature if needed
+        control_point_1_lon = mid_point_lon + 1
+
+        control_point_2_lat = mid_point_lat +1  # Adjust for more curvature if needed
+        control_point_2_lon = mid_point_lon + 1
+        line_width = flow_value * arrow_scale / max(flows.values()) + 1
+
+            # Add a curved line by adding intermediate points (manual control points)
+        fig.add_trace(go.Scattermapbox(
+            lon=[source_coord[1], control_point_1_lon, control_point_2_lon, target_coord[1]],
+            lat=[source_coord[0], control_point_1_lat, control_point_2_lat, target_coord[0]],
+            mode='lines',
+            line=dict(width=line_width, color='blue'),  # Adjust line color if needed
+            opacity=0.7,
+            hoverinfo='none'
+    ))
+
+    # If flow is negative, reverse source and target
+        
+        
+
+
+
+    # Add a curved line by adding intermediate points (manual control points)
+
+
+    # Add an arrowhead at the target location
+        v = target_coord - np.array([control_point_1_lat, control_point_1_lon])
+        v /= np.linalg.norm(v)
+
+        l = 0.15 * arrow_scale
+        w = 0.1 * arrow_scale
+
+        u = np.array([-v[1], v[0]])
+
+        P = target_coord - l * v
+        S = P - w * u
+        T = P + w * u
+
+        fig.add_trace(go.Scattermapbox(
+            lon=[S[1], target_coord[1], T[1], S[1]],
+            lat=[S[0], target_coord[0], T[0], S[0]],
+            mode='lines',
+            fill='toself',
+            fillcolor='blue',  # Adjust arrowhead color if needed
+            line_color='blue',
+            hoverinfo='none'
+    ))
+
+    # Add the flow value text in the middle of the curved arrow
+        fig.add_trace(go.Scattermapbox(
+            lon=[mid_point_lon+1],
+            lat=[mid_point_lat+1],
+            mode='text',
+            text=[f"{flow_value:.1f}"],
+            textfont=dict(size=14, color='blue'),
+            textposition="middle center",
+            hoverinfo='text',
+            hovertext=f"{source}_SWL -> {target}_SWL: {flow_value:.1f}"
+    ))
+
+
+# Iterate through flows where keys are tuples (source, target)
     for (source, target), flow_value in flows.items():
-        add_arrow(fig, source, target, flow_value, arrow_scale)
+    # Add the arrow using the parsed source and target  
+             add_arrow(fig, source, target, flow_value, arrow_scale)
+             
+             
+    new_df = Border_df[Border_df['cnecName'].str.contains('SWL', case=False, na=False)]         
+    #new_df['biddingZoneTo'] = new_df['biddingZoneTo'].replace('46Y000000000007M', 'SE4')
+    #new_df['biddingZoneFrom'] = new_df['biddingZoneFrom'].replace('46Y000000000007M', 'SE4')
+    
+    new_df['biddingZoneTo'] = new_df['biddingZoneTo'].replace('SE4_SWL', 'SE3')
+    new_df['biddingZoneFrom'] = new_df['biddingZoneFrom'].replace('SE4_SWL', 'SE3')
+    
+    
+    #new_df['biddingZoneFrom'] = new_df['biddingZoneFrom'].replace('46Y000000000008K', 'SE3')
+    #new_df['biddingZoneTo'] = new_df['biddingZoneTo'].replace('46Y000000000008K', 'SE3')  
+      
+    new_df['biddingZoneFrom'] = new_df['biddingZoneFrom'].replace('SE3_SWL', 'SE4')
+    new_df['biddingZoneTo'] = new_df['biddingZoneTo'].replace('SE3_SWL', 'SE4')    
+    
+    new_df['flow'] =  new_df['biddingZoneFrom']+'-'+new_df['biddingZoneTo']
+    
+    
+    max_flow_row = filter_for_zones(new_df, 'SE3', 'SE4', 'flow')   
+ 
+    source = max_flow_row['biddingZoneFrom']
+    target = max_flow_row['biddingZoneTo']
+    flow_value = max_flow_row['Flow_FB']
+
+# Call the add_curved_arrow function with the extracted values
+    add_curved_arrow(fig=fig, source=source, target=target, flow_value=flow_value, arrow_scale=0.5)             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
+             
 
 # Add the region markers and their values
     for region, coord in COORDINATES.items():
@@ -903,7 +1047,7 @@ def map_page():
             textfont=dict(size=24, color='white'),
             textposition="middle center",
             hoverinfo='text',
-            #hovertext=f"{source} -> {target}: {flow_value:.1f}"
+            hovertext=f"{region}, {net_price[region]}"
         ))
 # Update the map layout
         fig.update_layout(
@@ -920,6 +1064,7 @@ def map_page():
 
 # Display the figure in Streamlit
     st.plotly_chart(fig)
+    st.subheader("TSO - PTDFs")
 
     tso_filtered_df_no_index = tso_filtered_df[['cnecName','tso','Flow_FB','ram','shadow_price','ptdf_DK1','ptdf_DK1_CO','ptdf_DK1_DE','ptdf_DK1_KS','ptdf_DK1_SK','ptdf_DK1_SB','ptdf_DK2','ptdf_DK2_KO','ptdf_DK2_SB','ptdf_FI','ptdf_FI_EL','ptdf_FI_FS','ptdf_NO1','ptdf_NO2','ptdf_NO2_ND','ptdf_NO2_SK','ptdf_NO2_NK','ptdf_NO3','ptdf_NO4','ptdf_NO5','ptdf_SE1','ptdf_SE2','ptdf_SE3','ptdf_SE3_FS','ptdf_SE3_KS','ptdf_SE3_SWL','ptdf_SE4','ptdf_SE4_BC','ptdf_SE4_NB','ptdf_SE4_SP','ptdf_SE4_SWL']].reset_index(drop=True)
     
@@ -928,9 +1073,15 @@ def map_page():
 
          
     st.dataframe(tso_filtered_df_no_index.set_index('cnecName'))
+    st.subheader("NetPosition")
 
-           
+    columns_to_display = ['Flow_FB', 'cnecName']
 
+# Ensure that the selected columns exist in the filtered DataFrame
+    if all(col in Net_df_filtered.columns for col in columns_to_display):
+        st.dataframe(Net_df_filtered[columns_to_display].set_index('cnecName'))
+    else:
+        st.write("Some of the required columns are missing from the DataFrame.")
     
     
 #########################################################################################
@@ -1000,70 +1151,264 @@ def map_page():
 
 # Function for the flow plot page
 # Function for the flow plot page
+
+
 def flow_page():
-   # Define the available flows in the desired format
+    # Define the available flows in the desired format
+    
+    def update_selected_flows():
+        st.session_state['selected_flows'] = st.session_state['selected_flows_select']
+    
     available_flows = [
-        'FI->FI_EL', 'DK1->DK2', 'DK1->SE3', 'DK1->NO2', 
-        'DK2->SE4', 'SE4->SE3', 'SE3->NO1', 'SE3->SE2',
-        'NO1->NO2', 'NO1->NO3', 'NO1->NO5', 'NO2->NO5',
-        'NO5->NO3', 'NO3->SE2', 'NO3->NO4', 'NO4->SE2',
-        'SE1->NO4', 'SE1->SE2', 'SE1->FI', 'FI->SE3', 
-        'FI->NO4', 'NO2->NL', 'DK1->NL', 'NO2->DE', 
-        'DK1->DE', 'DK2->DE', 'SE4->PL', 'SE4->DE', 
-        'SE4->LI', 'FI->ES'
+        'DK1->DK2', 'DK1->SE3', 'DK1->NO2', 'DK2->SE4',
+        'SE4->SE3', 'SE3->NO1', 'SE3->SE2', 'NO1->NO2',
+        'NO1->NO3', 'NO1->NO5', 'NO2->NO5', 'NO5->NO3',
+        'NO3->SE2', 'NO3->NO4', 'NO4->SE2', 'SE1->NO4',
+        'SE1->SE2', 'SE1->FI', 'FI->SE3', 'FI->NO4',
+        'NO2->NL', 'DK1->NL', 'NO2->DE', 'DK1->DE',
+        'DK2->DE', 'SE4->PL', 'SE4->DE', 'SE4->LI',
+        'FI->ES'
     ]
+    #########################################################################################################
+    ### BORDER CNECS ###
+    #########################################################################################################
+    Border_df = st.session_state.get('Border_df', None)
 
-    # Select multiple flows
-    selected_flows = st.multiselect("Select flows to plot", available_flows, default=['FI->FI_EL'])
+    ##### DK1
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('DK1_SB', 'DK2')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('DK1_SB', 'DK2')
 
-    if selected_flows:
-        for flow in selected_flows:
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('DK1_DE', 'DE')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('DK1_DE', 'DE')
+
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('DK1_CO', 'NL')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('DK1_CO', 'NL')
+
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('DK1_SK', 'NO2')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('DK1_SK', 'NO2')
+    
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('DK1_KS', 'SE3')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('DK1_KS', 'SE3')
+
+    ##### DK2
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('DK2_SB', 'DK1')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('DK2_SB', 'DK1')    
+    
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('DK2_KO', 'DE')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('DK2_KO', 'DE')
+    
+    ##### SE4
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('SE4_BC', 'DE')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('SE4_BC', 'DE')
+
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('SE4_NB', 'PL')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('SE4_NB', 'PL')
+
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('SE4_SP', 'LI')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('SE4_SP', 'LI')
+
+    #### SE3
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('SE3_KS', 'DK1')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('SE3_KS', 'DK1')
+
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('SE3_FS', 'FI')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('SE3_FS', 'FI')
+
+    #### FI
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('FI_FS', 'SE3')    
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('FI_FS', 'SE3')    
+
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('FI_EL', 'ES')   
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('FI_EL', 'ES')    
+
+    #### NO2
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('NO2_SK', 'DK1')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('NO2_SK', 'DK1')
+
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('NO2_ND', 'NL')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('NO2_ND', 'NL')
+
+    Border_df['biddingZoneTo'] = Border_df['biddingZoneTo'].replace('NO2_NK', 'DE')
+    Border_df['biddingZoneFrom'] = Border_df['biddingZoneFrom'].replace('NO2_NK', 'DE')
+
+    # Create the flow column combining biddingZoneFrom and biddingZoneTo
+    Border_df['flow'] =  Border_df['biddingZoneFrom'] + '-' + Border_df['biddingZoneTo']
+    
+    #########################################################################################################
+    ### FUNCTION TO FILTER MAXIMUM FLOW ###
+    #########################################################################################################
+
+    def filter_for_zones(df, zone1, zone2, column):
+        
+        
+        
+        
+        
+        # Create the forward and reverse search patterns
+        forward = f"{zone1}-{zone2}"
+        reverse = f"{zone2}-{zone1}"
+    
+        # Filter the DataFrame for either forward or reverse pattern
+        filtered_df = df[(df[column] == forward) | (df[column] == reverse)]
+        if not filtered_df.empty:
+            max_flow_row = filtered_df.loc[filtered_df['Flow_FB'].abs().idxmax()]
+            return max_flow_row
+        else:
+            return None
+    def get_max_flow_per_time_normalized(df, zone1, zone2, column):
+
+    # Create the forward and reverse search patterns
+        forward = f"{zone1}-{zone2}"
+        reverse = f"{zone2}-{zone1}"
+    
+    # Filter the DataFrame for either forward or reverse pattern
+        filtered_df = df[(df[column] == forward) | (df[column] == reverse)]
+    
+        if filtered_df.empty:
+            return pd.DataFrame(columns=['dateTimeCET', 'maxFlow_fb', 'flow_direction'])  # Return empty DataFrame if no matches
+
+    # Group by dateTimeCET and find the row with the maximum Flow_FB for each time point
+        max_flow_per_time = filtered_df.groupby('dateTimeCET').apply(lambda x: x.loc[x['Flow_FB'].abs().idxmax()])
+
+    # Create a new DataFrame with just dateTimeCET and maxFlow
+        result_df = max_flow_per_time[['dateTimeCET', 'Flow_FB','maxFlow','minFlow', column]].copy()
+
+    # Normalize the flow direction
+        result_df['maxFlow_fb'] = result_df.apply(
+            lambda row: row['Flow_FB'] if row[column] == forward else -row['Flow_FB'], axis=1
+    )
+
+    # Ensure the flow direction is always zone1 -> zone2
+        result_df['flow_direction'] = forward
+
+    # Drop the original Flow_FB and flow columns (keeping only dateTimeCET, maxFlow, flow_direction)
+        result_df = result_df[['dateTimeCET','maxFlow_fb','maxFlow','minFlow', 'flow_direction']]
+
+        return result_df
+    
+    
+    
+    # Iterate over the flows and update with maximum values
+    flows = {('DK1', 'DK2'): 0, ('DK1', 'SE3'): 0, ('DK1', 'NO2'): 0, ('DK2', 'SE4'): 0}
+    for (zone1, zone2), value in list(flows.items()):
+        max_flow_row = filter_for_zones(Border_df, zone1, zone2, 'flow')
+        if max_flow_row is not None:
+            flows[(zone1, zone2)] = max_flow_row['Flow_FB']
+
+    #########################################################################################################
+    ### FLOW SELECTION AND PLOTTING ###
+    #########################################################################################################
+
+    # Select multiple flows from the available flows dropdown
+    if 'selected_flows' not in st.session_state:
+        st.session_state['selected_flows'] = ['DK1->DK2']  # Default value    #show_min_flow = st.checkbox("Show Minimum Flow", value=True)
+    #show_max_flow = st.checkbox("Show Maximum Flow", value=True)
+
+
+
+    st.multiselect(
+        "Select flows to plot",
+        options=available_flows,
+        default=st.session_state['selected_flows'],
+        key='selected_flows_select',
+        on_change=update_selected_flows  # Use callback to update session state
+)
+
+
+
+
+    if st.session_state['selected_flows']:
+        for flow in st.session_state['selected_flows']:
             # Extract in_domain and out_domain from the selected flow
             in_domain, out_domain = flow.split('->')
 
-            # Filter the DataFrame for the selected flow (assuming fref and datetime are available in the dataset)
-            filtered_df = st.session_state['Border_df'][(st.session_state['Border_df']['biddingZoneFrom'] == in_domain) &
-                                                        (st.session_state['Border_df']['biddingZoneTo'] == out_domain)]
-            st.dataframe(filtered_df)
-            if not filtered_df.empty:
-                # Plot fref as a function of datetime for the selected flow
-                fig = px.line(filtered_df, x='dateTimeUtc', y='fref', title=f"Flow: {flow}", labels={'fref': 'Flow Reference (fref)', 'dateTimeUtc': 'Datetime'})
+            # Filter the DataFrame for the selected flow
+            DF = get_max_flow_per_time_normalized(Border_df, in_domain, out_domain, 'flow')
+
+            if not DF.empty:
+                # Find the row with the maximum absolute Flow_FB value
+              
+                # Plot the flow over time
+                fig = px.line(
+                    DF,
+                    x='dateTimeCET',  # Assuming dateTimeCET is the datetime column
+                    y='maxFlow_fb',
+                    title=f"Flow: {in_domain}-{out_domain} ",
+                    labels={'Flow_FB': 'Flow (MW)', 'dateTimeCET': 'Datetime'}
+                )
+                fig.add_scatter(
+                    x=DF['dateTimeCET'],  # Ensure this is the correct datetime column
+                    y=DF['minFlow'],      # Ensure this column exists in the DataFrame
+                    name = 'Min Flow'
+
+                )
+                fig.add_scatter(
+                    x=DF['dateTimeCET'],  # Ensure this is the correct datetime column
+                    y=DF['maxFlow'],      # Ensure this column exists in the DataFrame
+                    name = 'Max Flow'
+
+                )
                 st.plotly_chart(fig)
             else:
                 st.warning(f"No data found for the selected flow: {flow}")
     else:
         st.info("Please select at least one flow to display the plot.")
+
         
         
         
-        
-        
+def update_selected_positions():
+    st.session_state['selected_net_positions'] = st.session_state['net_positions_select']
+
+# Net position plotting page
 def net_position_page():
     st.title("Net Position Plots")
 
     # Filter Net_df to include only rows where biddingZoneFrom equals biddingZoneTo
     filtered_net_df = st.session_state['Net_df'][st.session_state['Net_df']['biddingZoneFrom'] == st.session_state['Net_df']['biddingZoneTo']]
 
-    # Create a list of net positions for selection
+    # Create a list of available net positions for selection
     available_net_positions = filtered_net_df['biddingZoneFrom'].unique()
 
-    # Multi-select dropdown for net positions
-    selected_positions = st.multiselect("Select net positions to plot", available_net_positions)
+    # Initialize session state for selected net positions if it doesn't exist
+    if 'selected_net_positions' not in st.session_state:
+        st.session_state['selected_net_positions'] = []  # Empty default value
 
-    if selected_positions:
-        for position in selected_positions:
+    # Multi-select dropdown for net positions with callback
+    st.multiselect(
+        "Select net positions to plot",
+        available_net_positions,
+        default=st.session_state['selected_net_positions'],
+        key='net_positions_select',
+        on_change=update_selected_positions  # Callback to update session state
+    )
+
+    # If net positions are selected, plot them
+    if st.session_state['selected_net_positions']:
+        for position in st.session_state['selected_net_positions']:
             # Filter DataFrame for the selected net position
             position_df = filtered_net_df[filtered_net_df['biddingZoneFrom'] == position]
 
             if not position_df.empty:
                 # Plot fref as a function of datetime for the selected net position
-                fig = px.line(position_df, x='dateTimeUtc', y='fref', title=f"Net Position: {position}", labels={'fref': 'Net Position (fref)', 'dateTimeUtc': 'Datetime'})
+                fig = px.line(position_df, x='dateTimeCET', y='Flow_FB', title=f"Net Position: {position}", labels={'fref': 'Net Position (fref)', 'dateTimeCET': 'Datetime'})
+                fig.add_scatter(
+                    x=position_df['dateTimeCET'],  # Pass the x-axis data (datetime column)
+                    y=position_df['minFlow'],      # Pass the y-axis data (minFlow column)
+                    mode='lines',                  # Set the mode to lines
+                    name='Min Flow'                # Label the scatter trace
+)
+                fig.add_scatter(
+                    x=position_df['dateTimeCET'],  # Pass the x-axis data (datetime column)
+                    y=position_df['maxFlow'],      # Pass the y-axis data (minFlow column)
+                    mode='lines',                  # Set the mode to lines
+                    name='Min Flow'                # Label the scatter trace
+)
                 st.plotly_chart(fig)
             else:
                 st.warning(f"No data found for the selected net position: {position}")
     else:
         st.info("Please select at least one net position to display the plot.")
-
 
 
 
@@ -1074,8 +1419,9 @@ def shadow_price_page():
     if 'Remaining_df' in st.session_state:
         Remaining_df = st.session_state['Remaining_df'].copy()
 
-       
+        Remaining_df.loc[Remaining_df['tso'] == 'ENERGINET', 'cnecName'] = Remaining_df['cnecName'] + " + " + Remaining_df['contName']
 
+        
         # Summary table
         summary_table = Remaining_df.groupby('cnecName').agg(
             hours_with_shadow_price=('shadow_price', lambda x: (x > 0).sum()),
@@ -1102,16 +1448,22 @@ def DA_price_page():
         germany_df = st.session_state['germany_df']
         other_zones_df = st.session_state['other_zones_df']
         
+        # Sort Germany DataFrame by 'Datetime'
+        germany_df = germany_df.sort_values(by='Datetime')
+
         # Plot Germany prices (15-minute resolution)
-        st.subheader("Day-Ahead Prices for Germany (1hour resolution)")
-        germany_fig = px.scatter(germany_df, x='Datetime', y='Price', title="Germany Prices (1-hour resolution)", labels={'Price': 'Price (EUR/MWh)'})
+        st.subheader("Day-Ahead Prices for Germany (1-hour resolution)")
+        germany_fig = px.line(germany_df, x='Datetime', y='Price', title="Germany Prices (1-hour resolution)", labels={'Price': 'Price (EUR/MWh)'})
         st.plotly_chart(germany_fig)
 
         # Plot prices for each bidding zone in other zones
         for zone in other_zones_df['Zone'].unique():
             zone_df = other_zones_df[other_zones_df['Zone'] == zone]
+            # Sort each zone's DataFrame by 'Datetime'
+            zone_df = zone_df.sort_values(by='Datetime')
+            
             st.subheader(f"Day-Ahead Prices for {zone}")
-            zone_fig = px.scatter(zone_df, x='Datetime', y='Price', title=f"{zone} Prices", labels={'Price': 'Price (EUR/MWh)'})
+            zone_fig = px.line(zone_df, x='Datetime', y='Price', title=f"{zone} Prices", labels={'Price': 'Price (EUR/MWh)'})
             st.plotly_chart(zone_fig)
     
     else:
