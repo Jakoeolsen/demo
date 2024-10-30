@@ -10,9 +10,6 @@ from lxml import etree
 st.set_page_config(layout="wide")
 
 # Example API endpoint and key
-URL1 = "https://test-publicationtool.jao.eu/nordic/api/data/finalComputation"
-URL2 = "https://test-publicationtool.jao.eu/nordic/api/data/fbDomainShadowPrice"
-token = "43307660-a55b-4bac-8356-0d6ea9818ad7"
 
 
 # Function to make the API call and return the DataFrame
